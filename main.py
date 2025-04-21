@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-
+print("hello")
 class DigitalTwin:
     def __init__(self):
         # OpenAI configuration
@@ -164,7 +164,7 @@ class DigitalTwin:
             st.error(f"Error searching similar documents: {e}")
             return []
     
-    def generate_response(self, email_body, pdf_content, related_documents):
+    def generate_response(self, email_body, pdf_content, related_documents, additional_input=""):
         """Generate a response using OpenAI's GPT model."""
         try:
             # Prepare context for the model
@@ -187,6 +187,9 @@ class DigitalTwin:
             
             Previous related documents and emails:
             {related_content}
+            
+            Additional Input:
+            {additional_input}
             
             Please draft a response that:
             1. Addresses the specific points raised in the email
@@ -211,12 +214,11 @@ class DigitalTwin:
             return "I couldn't generate a proper response due to an error. Please try again."
 
 def main():
-    st.set_page_config(page_title="Digital Twin Email Responder", layout="wide")
+    st.set_page_config(page_title="RespondMail", layout="wide")
     
-    st.title("Digital Twin Email Responder")
+    st.title("AutoMail")
     st.markdown("""
-    This application simulates a digital twin that generates responses to emails with PDF attachments,
-    mimicking your writing style and incorporating context from the documents.
+        Tired of replying to your mails, automate replies using AutoMail
     """)
     
     # Initialize the digital twin
@@ -256,6 +258,12 @@ def main():
                 base64_pdf = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
                 pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="300" type="application/pdf"></iframe>'
                 st.markdown(pdf_display, unsafe_allow_html=True)
+            
+            # Add additional input field here, before the response generation
+            st.subheader("Additional Input")
+            st.write("Provide any additional notes or instructions for your response:")
+            additional_input = st.text_area("Additional Input", height=150, 
+                                           placeholder="Example: Make the tone more formal, emphasize point X, include specific information about Y...")
         
         with col2:
             st.header("Generated Response")
@@ -274,10 +282,15 @@ def main():
                         query = f"{email_subject} {email_body[:200]}"
                         related_documents = digital_twin.search_similar_documents(query)
                         
-                        # Generate response
-                        response = digital_twin.generate_response(email_body, pdf_content, related_documents)
+                        # Generate response with additional input
+                        response = digital_twin.generate_response(
+                            email_body, 
+                            pdf_content, 
+                            related_documents,
+                            additional_input
+                        )
                         
-                        # Store the document
+                        # Store the document after generating response
                         doc_id = digital_twin.store_document(
                             uploaded_file.name, 
                             pdf_content, 
