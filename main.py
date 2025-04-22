@@ -10,19 +10,18 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
+
 load_dotenv()
 print("hello")
 class DigitalTwin:
     def __init__(self):
-        # OpenAI configuration
+        
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         
-        # Style examples for the digital twin
+      
         self.style_examples = [
             "I hope this email finds you well. Thanks for sharing the document.",
             "Looking at the data you've provided, I think we can proceed with the next steps.",
@@ -30,7 +29,7 @@ class DigitalTwin:
             "I appreciate your prompt response on this matter."
         ]
         
-        # Connect to Pinecone
+       
         self.connect_to_pinecone()
         self.initialize_index()
     
@@ -49,12 +48,12 @@ class DigitalTwin:
         self.namespace = "email-twin"
         
         try:
-            # List available indexes
+          
             indexes = self.pc.list_indexes()
             
-            # Check if our index exists
+           
             if index_name not in [index.name for index in indexes]:
-                # Create the index if it doesn't exist
+               
                 self.pc.create_index(
                     name=index_name,
                     dimension=1536,
@@ -63,7 +62,7 @@ class DigitalTwin:
                 )
                 logger.info(f"Created index {index_name}")
             
-            # Connect to the index
+            
             self.index = self.pc.Index(index_name)
             logger.info(f"Connected to index {index_name}")
         except Exception as e:
@@ -99,22 +98,19 @@ class DigitalTwin:
     def store_document(self, file_name, content, email_subject, email_body):
         """Store document in Pinecone with its embedding."""
         try:
-            # Generate unique ID
+           
             doc_id = str(uuid.uuid4())
-            
-            # Get embedding for content
+           
             embedding = self.get_embedding(content)
-            
-            # Prepare metadata
+         
             metadata = {
                 "file_name": file_name,
-                "content": content[:8000],  # Truncate content to fit Pinecone limits
+                "content": content[:8000],  
                 "email_subject": email_subject,
-                "email_body": email_body[:8000],  # Truncate email body to fit Pinecone limits
+                "email_body": email_body[:8000],  
                 "created_at": datetime.now().isoformat()
             }
             
-            # Insert data
             self.index.upsert(
                 vectors=[
                     {
@@ -135,10 +131,8 @@ class DigitalTwin:
     def search_similar_documents(self, query_text, limit=5):
         """Search for similar documents in Pinecone."""
         try:
-            # Get embedding for query
+           
             query_embedding = self.get_embedding(query_text)
-            
-            # Search
             results = self.index.query(
                 namespace=self.namespace,
                 vector=query_embedding,
@@ -146,7 +140,6 @@ class DigitalTwin:
                 include_metadata=True
             )
             
-            # Format results
             similar_docs = []
             for match in results.matches:
                 similar_docs.append({
@@ -167,7 +160,6 @@ class DigitalTwin:
     def generate_response(self, email_body, pdf_content, related_documents, additional_input=""):
         """Generate a response using OpenAI's GPT model."""
         try:
-            # Prepare context for the model
             related_content = ""
             for doc in related_documents:
                 related_content += f"Document: {doc['file_name']}\nEmail Subject: {doc['email_subject']}\nEmail Body: {doc['email_body']}\nPDF Content: {doc['content'][:500]}...\n\n"
@@ -220,27 +212,21 @@ def main():
     st.markdown("""
         Tired of replying to your mails, automate replies using AutoMail
     """)
-    
-    # Initialize the digital twin
     digital_twin = DigitalTwin()
     
-    # Sidebar for style customization
     with st.sidebar:
         st.header("Customize Your Style")
         st.markdown("Edit these examples to reflect your writing style:")
         
-        # Create text areas for each style example
         new_examples = []
         for i, example in enumerate(digital_twin.style_examples):
             new_example = st.text_area(f"Style Example {i+1}", example, height=100)
             new_examples.append(new_example)
-        
-        # Update style examples
+       
         if st.button("Update Style"):
             digital_twin.style_examples = new_examples
             st.success("Style examples updated!")
-    
-    # Main content area with tabs
+   
     tab1, tab2 = st.tabs(["Compose & Generate Response", "Search Previous Documents"])
     
     with tab1:
@@ -253,13 +239,11 @@ def main():
             uploaded_file = st.file_uploader("Upload PDF Attachment", type="pdf")
             
             if uploaded_file is not None:
-                # Display PDF preview
                 st.subheader("PDF Preview")
                 base64_pdf = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
                 pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="300" type="application/pdf"></iframe>'
                 st.markdown(pdf_display, unsafe_allow_html=True)
-            
-            # Add additional input field here, before the response generation
+
             st.subheader("Additional Input")
             st.write("Provide any additional notes or instructions for your response:")
             additional_input = st.text_area("Additional Input", height=150, 
@@ -275,14 +259,11 @@ def main():
                     st.error("Please upload a PDF file.")
                 else:
                     with st.spinner("Processing PDF and generating response..."):
-                        # Extract PDF content
                         pdf_content = digital_twin.extract_text_from_pdf(uploaded_file)
                         
-                        # Search for related documents
                         query = f"{email_subject} {email_body[:200]}"
                         related_documents = digital_twin.search_similar_documents(query)
                         
-                        # Generate response with additional input
                         response = digital_twin.generate_response(
                             email_body, 
                             pdf_content, 
@@ -290,18 +271,16 @@ def main():
                             additional_input
                         )
                         
-                        # Store the document after generating response
+                        
                         doc_id = digital_twin.store_document(
                             uploaded_file.name, 
                             pdf_content, 
                             email_subject, 
                             email_body
                         )
-                        
-                        # Display the response
+                    
                         st.text_area("Response", response, height=400)
-                        
-                        # Option to download as text file
+                       
                         response_bytes = response.encode()
                         st.download_button(
                             label="Download Response",
