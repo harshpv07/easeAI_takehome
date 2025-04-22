@@ -1,4 +1,4 @@
-# Digital Twin Email Responder
+# AutoMail
 
 A Streamlit application that simulates a digital twin to generate responses to emails with PDF attachments, mimicking your writing style and incorporating context from previous documents.
 

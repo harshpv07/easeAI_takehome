@@ -46,3 +46,6 @@ Thumbs.db
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
+
+.run_app.py 
+.demo.py
