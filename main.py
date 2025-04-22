@@ -1,3 +1,4 @@
+from typing import Dict, List, Optional
 import os
 import io
 import base64
@@ -9,31 +10,38 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-# Setup logging
+
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
-class DigitalTwin:
+class EmailAssistant:
     def __init__(self):
-        # OpenAI configuration
-        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        
-        # Style examples for the digital twin
+        """Initialize the Email Assistant with connections to OpenAI and Pinecone"""
+        self.openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        self.llm = ChatOpenAI(
+            model="gpt-4",
+            api_key=os.getenv('OPENAI_API_KEY'),
+            temperature=0.7
+        )
+
+        self.conversation_history = []
+
         self.style_examples = [
             "I hope this email finds you well. Thanks for sharing the document.",
             "Looking at the data you've provided, I think we can proceed with the next steps.",
             "Let me know if you need any clarification on the points I've raised.",
             "I appreciate your prompt response on this matter."
         ]
-        
-        # Connect to Pinecone
+
         self.connect_to_pinecone()
         self.initialize_index()
-    
+        
     def connect_to_pinecone(self):
         """Connect to Pinecone vector database."""
         try:
@@ -41,80 +49,71 @@ class DigitalTwin:
             logger.info("Connected to Pinecone")
         except Exception as e:
             logger.error(f"Error connecting to Pinecone: {e}")
-            st.error(f"Error connecting to Pinecone: {e}")
-    
+            return False
+        return True
+            
     def initialize_index(self):
         """Initialize Pinecone index if it doesn't exist."""
-        index_name = "pdf-documents"
+        self.index_name = "pdf-documents"
         self.namespace = "email-twin"
         
         try:
-            # List available indexes
             indexes = self.pc.list_indexes()
             
-            # Check if our index exists
-            if index_name not in [index.name for index in indexes]:
-                # Create the index if it doesn't exist
+            if self.index_name not in [index.name for index in indexes]:
                 self.pc.create_index(
-                    name=index_name,
+                    name=self.index_name,
                     dimension=1536,
                     metric="cosine",
                     spec=ServerlessSpec(cloud="aws", region="us-east-1")
                 )
-                logger.info(f"Created index {index_name}")
+                logger.info(f"Created index {self.index_name}")
             
-            # Connect to the index
-            self.index = self.pc.Index(index_name)
-            logger.info(f"Connected to index {index_name}")
+            self.index = self.pc.Index(self.index_name)
+            logger.info(f"Connected to index {self.index_name}")
+            return True
         except Exception as e:
             logger.error(f"Error initializing Pinecone index: {e}")
-            st.error(f"Error initializing Pinecone index: {e}")
+            return False
     
-    def extract_text_from_pdf(self, pdf_file):
-        """Extract text content from a PDF file."""
+    def extract_text_from_pdf(self, pdf_content):
+        """Extract text content from PDF bytes."""
         try:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
             text = ""
             for page_num in range(len(pdf_reader.pages)):
                 text += pdf_reader.pages[page_num].extract_text()
             return text
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {e}")
-            st.error(f"Error extracting text from PDF: {e}")
             return "Could not extract text from PDF."
     
     def get_embedding(self, text):
         """Get embedding for text using OpenAI's API."""
         try:
-            response = self.client.embeddings.create(
+            response = self.openai_client.embeddings.create(
                 model="text-embedding-ada-002",
                 input=text
             )
             return response.data[0].embedding
         except Exception as e:
             logger.error(f"Error getting embedding: {e}")
-            st.error(f"Error getting embedding: {e}")
-            return [0] * 1536  # Return zero vector as fallback
+            return [0] * 1536 
     
     def store_document(self, file_name, content, email_subject, email_body):
         """Store document in Pinecone with its embedding."""
         try:
-            # Generate unique ID
             doc_id = str(uuid.uuid4())
-            
-            # Get embedding for content
             embedding = self.get_embedding(content)
             
-            # Prepare metadata
             metadata = {
                 "file_name": file_name,
-                "content": content[:8000],  # Truncate content to fit Pinecone limits
+                "content": content[:8000], 
                 "email_subject": email_subject,
-                "email_body": email_body[:8000],  # Truncate email body to fit Pinecone limits
+                "email_body": email_body[:8000],  
                 "created_at": datetime.now().isoformat()
             }
             
-            # Insert data
             self.index.upsert(
                 vectors=[
                     {
@@ -129,16 +128,12 @@ class DigitalTwin:
             return doc_id
         except Exception as e:
             logger.error(f"Error storing document: {e}")
-            st.error(f"Error storing document: {e}")
             return None
     
     def search_similar_documents(self, query_text, limit=5):
         """Search for similar documents in Pinecone."""
         try:
-            # Get embedding for query
             query_embedding = self.get_embedding(query_text)
-            
-            # Search
             results = self.index.query(
                 namespace=self.namespace,
                 vector=query_embedding,
@@ -146,7 +141,6 @@ class DigitalTwin:
                 include_metadata=True
             )
             
-            # Format results
             similar_docs = []
             for match in results.matches:
                 similar_docs.append({
@@ -161,32 +155,50 @@ class DigitalTwin:
             return similar_docs
         except Exception as e:
             logger.error(f"Error searching similar documents: {e}")
-            st.error(f"Error searching similar documents: {e}")
             return []
     
-    def generate_response(self, email_body, pdf_content, related_documents):
-        """Generate a response using OpenAI's GPT model."""
+    def generate_response(self, email_subject, email_body, pdf_content, pdf_name, additional_input=""):
+        """Generate a response using LangChain with direct message passing."""
         try:
-            # Prepare context for the model
+
+            query = f"{email_subject} {email_body[:200]}"
+            related_documents = self.search_similar_documents(query)
+   
             related_content = ""
             for doc in related_documents:
-                related_content += f"Document: {doc['file_name']}\nEmail Subject: {doc['email_subject']}\nEmail Body: {doc['email_body']}\nPDF Content: {doc['content'][:500]}...\n\n"
-            
+                related_content += f"Document: {doc.get('file_name', 'Unknown')}\n"
+                related_content += f"Email Subject: {doc.get('email_subject', '')}\n"
+                related_content += f"PDF Content: {doc.get('content', '')[:500]}...\n\n"
+
             style_examples = "\n".join(self.style_examples)
-            
-            prompt = f"""
+            truncated_pdf_content = pdf_content[:2000] if len(pdf_content) > 2000 else pdf_content
+       
+            system_content = f"""
             You are my digital twin, tasked with responding to an email. Your response should match my writing style based on these examples:
             
             {style_examples}
             
-            The email I received contains:
-            {email_body}
-            
-            The attached PDF contains:
-            {pdf_content[:2000] if len(pdf_content) > 2000 else pdf_content}
-            
             Previous related documents and emails:
             {related_content}
+            """
+  
+            messages = [
+                SystemMessage(content=system_content)
+            ]
+
+            for message in self.conversation_history:
+                messages.append(message)
+
+            human_content = f"""
+            The email I received contains:
+            Subject: {email_subject}
+            Body: {email_body}
+            
+            The attached PDF contains:
+            {truncated_pdf_content}
+            
+            Additional Input:
+            {additional_input}
             
             Please draft a response that:
             1. Addresses the specific points raised in the email
@@ -195,20 +207,50 @@ class DigitalTwin:
             4. Matches my writing style
             """
             
-            response = self.client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a digital twin email assistant that mimics the user's writing style."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
+            messages.append(HumanMessage(content=human_content))
+   
+            response = self.llm.invoke(messages)
+
+            self.conversation_history.append(HumanMessage(content=human_content))
+            self.conversation_history.append(AIMessage(content=response.content))
+   
+            if len(self.conversation_history) > 10:
+                self.conversation_history = self.conversation_history[-10:]
+   
+            self.store_document(pdf_name, pdf_content, email_subject, email_body)
             
-            return response.choices[0].message.content
-        
+            return response.content
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            st.error(f"Error generating response: {e}")
-            return "I couldn't generate a proper response due to an error. Please try again."
+            return f"Error generating response: {e}"
+
+def process_email_with_pdf(email_subject: str, email_body: str, pdf_content: bytes, pdf_name: str, writing_style: List[str] = None, additional_input: str = ""):
+    """Process an email with PDF attachment using LangChain"""
+    try:
+   
+        assistant = EmailAssistant()
+        if writing_style:
+            assistant.style_examples = writing_style
+        pdf_text = assistant.extract_text_from_pdf(pdf_content)
+        response = assistant.generate_response(
+            email_subject=email_subject,
+            email_body=email_body,
+            pdf_content=pdf_text,
+            pdf_name=pdf_name,
+            additional_input=additional_input
+        )
+        
+        return {
+            "final_response": response,
+            "error": ""
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in email processing: {e}")
+        return {
+            "final_response": f"An error occurred: {str(e)}",
+            "error": str(e)
+        }
 
 def main():
     st.set_page_config(page_title="Digital Twin Email Responder", layout="wide")
@@ -218,27 +260,20 @@ def main():
     This application simulates a digital twin that generates responses to emails with PDF attachments,
     mimicking your writing style and incorporating context from the documents.
     """)
-    
-    # Initialize the digital twin
-    digital_twin = DigitalTwin()
-    
-    # Sidebar for style customization
+
+    digital_twin = EmailAssistant()
     with st.sidebar:
         st.header("Customize Your Style")
         st.markdown("Edit these examples to reflect your writing style:")
         
-        # Create text areas for each style example
         new_examples = []
         for i, example in enumerate(digital_twin.style_examples):
             new_example = st.text_area(f"Style Example {i+1}", example, height=100)
             new_examples.append(new_example)
-        
-        # Update style examples
         if st.button("Update Style"):
             digital_twin.style_examples = new_examples
             st.success("Style examples updated!")
     
-    # Main content area with tabs
     tab1, tab2 = st.tabs(["Compose & Generate Response", "Search Previous Documents"])
     
     with tab1:
@@ -251,7 +286,6 @@ def main():
             uploaded_file = st.file_uploader("Upload PDF Attachment", type="pdf")
             
             if uploaded_file is not None:
-                # Display PDF preview
                 st.subheader("PDF Preview")
                 base64_pdf = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
                 pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="300" type="application/pdf"></iframe>'
@@ -267,28 +301,16 @@ def main():
                     st.error("Please upload a PDF file.")
                 else:
                     with st.spinner("Processing PDF and generating response..."):
-                        # Extract PDF content
-                        pdf_content = digital_twin.extract_text_from_pdf(uploaded_file)
-                        
-                        # Search for related documents
-                        query = f"{email_subject} {email_body[:200]}"
-                        related_documents = digital_twin.search_similar_documents(query)
-                        
-                        # Generate response
-                        response = digital_twin.generate_response(email_body, pdf_content, related_documents)
-                        
-                        # Store the document
-                        doc_id = digital_twin.store_document(
-                            uploaded_file.name, 
-                            pdf_content, 
-                            email_subject, 
-                            email_body
+                        pdf_content = digital_twin.extract_text_from_pdf(uploaded_file.getvalue())
+                        response = digital_twin.generate_response(
+                            email_subject=email_subject,
+                            email_body=email_body,
+                            pdf_content=pdf_content,
+                            pdf_name=uploaded_file.name
                         )
                         
-                        # Display the response
                         st.text_area("Response", response, height=400)
                         
-                        # Option to download as text file
                         response_bytes = response.encode()
                         st.download_button(
                             label="Download Response",
