@@ -12,13 +12,12 @@ from pinecone import Pinecone, ServerlessSpec
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
-# Initialize Pinecone
+
 pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
 
-# Define state structure
+
 class EmailWorkflowState(TypedDict):
     email_subject: str
     email_body: str
@@ -30,18 +29,13 @@ class EmailWorkflowState(TypedDict):
     final_response: str
     error: str
 
-# Initialize vector index
 def initialize_pinecone_index():
     index_name = "pdf-documents"
     namespace = "email-twin"
     
     try:
-        # List available indexes
         indexes = pc.list_indexes()
-        
-        # Check if our index exists
         if index_name not in [index.name for index in indexes]:
-            # Create the index if it doesn't exist
             pc.create_index(
                 name=index_name,
                 dimension=1536,
@@ -49,8 +43,6 @@ def initialize_pinecone_index():
                 spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
             logger.info(f"Created index {index_name}")
-        
-        # Connect to the index
         index = pc.Index(index_name)
         logger.info(f"Connected to index {index_name}")
         return index, namespace
@@ -58,10 +50,7 @@ def initialize_pinecone_index():
         logger.error(f"Error initializing Pinecone index: {e}")
         return None, namespace
 
-# Initialize index
 index, namespace = initialize_pinecone_index()
-
-# Define the workflow nodes (functions)
 def extract_pdf_content(state: EmailWorkflowState) -> EmailWorkflowState:
     """Extract content from PDF"""
     try:
@@ -93,7 +82,7 @@ def get_embedding(text):
         return response.data[0].embedding
     except Exception as e:
         logger.error(f"Error getting embedding: {e}")
-        return [0] * 1536  # Return zero vector as fallback
+        return [0] * 1536 
 
 def search_similar_documents(state: EmailWorkflowState) -> EmailWorkflowState:
     """Search for similar documents in vector store"""
@@ -151,8 +140,7 @@ def generate_draft_response(state: EmailWorkflowState) -> EmailWorkflowState:
             related_content += f"Document: {doc.get('file_name', 'Unknown')}\n"
             related_content += f"Email Subject: {doc.get('email_subject', '')}\n"
             related_content += f"PDF Content: {doc.get('content', '')[:500]}...\n\n"
-        
-        # Set up the prompt
+       
         prompt = f"""
         You are my digital twin, tasked with responding to an email. Your response should match my writing style based on these examples:
         
@@ -173,8 +161,7 @@ def generate_draft_response(state: EmailWorkflowState) -> EmailWorkflowState:
         3. Maintains continuity with any previous communications
         4. Matches my writing style
         """
-        
-        # Call LLM
+       
         logger.info("Calling LLM with prompt...")
         llm = ChatOpenAI(
             model="gpt-4", 
@@ -195,10 +182,9 @@ def generate_draft_response(state: EmailWorkflowState) -> EmailWorkflowState:
             }
         
         logger.info("Successfully generated draft response")
-        # Add both response and final_response to ensure we have a fallback
         return {
             "response": response.content,
-            "final_response": response.content,  # Also set final_response as fallback
+            "final_response": response.content, 
             **state
         }
     except Exception as e:
@@ -223,9 +209,9 @@ def store_document(state: EmailWorkflowState) -> EmailWorkflowState:
         # Prepare metadata
         metadata = {
             "file_name": state.get('pdf_name', 'Unknown'),
-            "content": state.get('pdf_content', '')[:8000],  # Truncate content to fit Pinecone limits
+            "content": state.get('pdf_content', '')[:8000], 
             "email_subject": state.get('email_subject', ''),
-            "email_body": state.get('email_body', '')[:8000],  # Truncate email body to fit Pinecone limits
+            "email_body": state.get('email_body', '')[:8000], 
             "created_at": datetime.now().isoformat()
         }
         
