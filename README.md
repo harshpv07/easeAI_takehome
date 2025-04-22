@@ -49,9 +49,3 @@ streamlit run main.py
    - Use the "Search Previous Documents" tab to find similar past documents
    - Enter a search query and click "Search"
 
-## Architecture
-
-- Uses OpenAI's API for embedding generation and response creation
-- Stores document embeddings in Pinecone vector database for efficient similarity search
-- Implements a namespace within Pinecone to organize document data
-- Extracts text from PDF documents using PyPDF2 
